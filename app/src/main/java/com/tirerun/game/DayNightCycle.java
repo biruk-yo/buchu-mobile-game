@@ -1,8 +1,8 @@
 package com.tirerun.game;
 
-/** A 90-second world clock; the caller advances it only while play/menu is active. */
+/** A ten-minute world clock; the caller advances it only while play/menu is active. */
 public final class DayNightCycle {
-    public static final float SECONDS=90;
+    public static final float SECONDS=600;
     public float angle,daylight,night,twilight,sunX,sunHeight,moonX,moonHeight;
     public int skyTop,skyBottom,worldTint;
     public void sample(float seconds) {

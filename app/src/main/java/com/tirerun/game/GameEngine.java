@@ -11,7 +11,7 @@ public final class GameEngine {
         public final Kind kind;
         public final int lane;
         public float z;
-        public boolean resolved;
+        public boolean resolved, collected;
         public Item(Kind kind, int lane, float z) { this.kind=kind; this.lane=lane; this.z=z; }
     }
     public interface Events { void coin(); void stumble(); void end(String reason); }
@@ -55,7 +55,7 @@ public final class GameEngine {
             if(!item.resolved && oldZ>0 && item.z<=0) {
                 item.resolved=true;
                 if(Math.abs(visualLane-item.lane)<0.48f) {
-                    if(item.kind==Kind.COIN) { coins++; if(events!=null)events.coin(); }
+                    if(item.kind==Kind.COIN) { item.collected=true;coins++; if(events!=null)events.coin(); }
                     else if(item.kind==Kind.MUD) { finish("The tire got stuck in the mud."); return; }
                     else if(jumpHeight()<0.35f) {
                         strikes++; recovery=8; flash=0.45f;

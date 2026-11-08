@@ -4,15 +4,19 @@ A playable Android endless-runner prototype: an Ethiopian boy rolls an upright t
 
 ## Play
 
+- A gold-and-green rolling-tire adaptive icon and matching ቡቹ title screen introduce the village, with a large start button, saved scores and swipe hints. The layout adapts to shorter portrait screens.
+- The title and “Back to village” screens use the same winding route, scenery and characters as gameplay. A gentle camera tour starts from the last run's location with the current day/night lighting; the preview does not change distance or coins.
 - Swipe left/right anywhere on the play area to change lanes. There are no on-screen movement buttons.
 - The camera follows the trail’s left and right bends automatically. Steering changes lanes relative to the path; coins and hazards follow the same route geometry.
+- Roadside courtyards include striped produce stalls, neighbors, laundry lines, clay pots, woven baskets, woodpiles and wells. Garden beds, hedges, stone verges and woven fences fill the spaces between compounds, with all scenery placed outside the running lanes.
 - Swipe up to jump over rocks and logs.
+- Rocks, logs and mud remain visible after passing the boy and leave through the screen edge; collision checks still happen only once as they reach him.
 - Mud traps the tire and ends the run, including during a hop. Steer around it.
 - Mud uses a bundled wet-soil texture, ground-perspective mapping, subtle ripples and an impact splash before the result screen.
-- The boy uses a smooth rear-view stride with a capped cadence (1.35–1.85 cycles/second), independent of tire rotation. Both hands stay anchored to the tire. The dog uses coordinated diagonal paw pairs and a low four-legged posture.
+- The boy uses a smooth rear-view stride with a capped cadence (1.35–1.85 cycles/second), independent of tire rotation. The tire rolls low on the trail ahead of him. A slight rear-quarter projection reveals the spinning rim beside his silhouette while retaining overlap with his body. Small coordinated hand strokes and elbow flexion show him pushing; both hands stay on the rubber, and a tight contact shadow grounds the wheel. The dog uses coordinated diagonal paw pairs and a low four-legged posture.
 - The first obstacle hit brings the dog closer. A second hit within eight seconds ends the run. Eight seconds without a hit clear the first strike.
-- A moving sun brings sunset, night with a moon and stars, and sunrise over a 90-second cycle. World lighting changes while controls remain readable. The world clock advances in play and on the title screen, freezes when paused/backgrounded, and continues across retries.
-- Collect coins; distance and coin totals are saved on game over or when returning to the village through the pause screen.
+- A moving sun brings sunset, night with a moon and stars, and sunrise over a ten-minute cycle (about five minutes each for day and night, including gradual transitions). At night, warm interiors glow through house windows and open doorways, spilling light onto the courtyards. World lighting changes while controls remain readable. The world clock advances in play and on the title screen, freezes when paused/backgrounded, and continues across retries.
+- Collected coins disappear on pickup and reward once. Missed coins continue past the boy and leave through the bottom of the screen. Distance and coin totals are saved on game over or when returning to the village through the pause screen.
 - Tap pause at the upper right. Backgrounding the app automatically pauses the run.
 - Emulator keyboard: arrows or A/D to steer; Up, W or Space to hop; P/Escape to pause; Enter to start/resume.
 
@@ -40,13 +44,14 @@ The local `local.properties` points to this Mac’s Android SDK and is excluded 
 
 - `GameEngine.java`: deterministic, platform-independent game rules and world generation.
 - `GameView.java`: original vector-style artwork, animation, gestures, HUD and menus.
+- `VillageArt.java`: reusable roadside market, garden, household and neighbor illustrations.
 - `TrailCamera.java`: continuous curved route, perspective projection, smooth rear camera following and district names.
-- `RunCycle.java`: smoothly interpolated rear-view poses, bounded cadence and fixed hand contacts on the tire.
+- `RunCycle.java`: smoothly interpolated rear-view poses, bounded cadence, two-hand contact with the tire directly ahead.
 - `MainActivity.java`: Android lifecycle, portrait display and immersive mode.
 - `GameEngineTest.java`: executable checks for rewards, hazards, recovery, lane limits, jumping, pause/resume, restart and bounded world generation.
 - `TrailCameraTest.java`: checks both-direction bends, lane visibility/order, approaching-hazard sightlines, perspective depth, lane following and camera pause.
-- `RunCycleTest.java`: verifies bounded cadence, smooth loop/foot motion, leg separation, planted/lifted feet and fixed tire contact.
+- `RunCycleTest.java`: verifies bounded cadence, smooth loop/foot motion, leg separation, planted/lifted feet, tire alignment ahead of the boy and both hands’ tire contact.
 - `DayNightCycle.java` / `DayNightCycleTest.java`: continuous sun/moon positions, sunset/night/sunrise colors and visibility limits.
-- `VisualCheck.java` (Android test APK only): renders four lighting states and a 16-frame stride proof sheet from the real Android view.
+- `VisualCheck.java` (Android test APK only): renders lighting states, village districts, a 16-frame stride proof sheet, obstacles and missed coins passing off-screen, the adaptive icon, and the title screen by day/night and at a compact size. It also checks the start-button touch target. Run `sh scripts/check-visuals.sh --offline` with an emulator connected; images are saved under `build/screenshots/day-night/`.
 
 Current scope: an endless winding wooded-village route with denser compound sections, procedural obstacles, sound cues and local scores. Bends follow automatically; there are no player-selected junctions yet. No shop, missions, character selection, cloud saves or full 3D models yet. Cultural details are a starting art direction for review rather than a representation of every Ethiopian community.

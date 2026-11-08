@@ -1,8 +1,13 @@
 package com.tirerun.game;
 
-/** Smooth rear-view run poses, bounded cadence, and fixed two-hand tire contact. */
+/** Smooth rear-view run poses with both hands guiding a tire directly ahead. */
 public final class RunCycle {
     public static final float TAU=(float)(Math.PI*2);
+    public static final float TIRE_SCALE=1.1f;
+    public static final float TIRE_GROUND_Y=-60;
+    // A mild rear-quarter projection reveals the wheel ahead of the torso.
+    // Its sideways screen offset is smaller than its radius, not a side-by-side pose.
+    public static final float FORWARD_VIEW_SKEW=.42f;
     public static final class Leg {
         public float hipX,hipY,kneeX,kneeY,footX,footY,lift;
     }
@@ -17,14 +22,22 @@ public final class RunCycle {
     public void sample(float stridePhase,float metres,float hop) {
         phase=cycle(stridePhase);float a=phase*TAU;
         bob=-(1-(float)Math.cos(a*2))*.7f;sway=(float)Math.sin(a)*.8f;
-        tireX=35+(float)Math.sin(a)*.65f;tireY=-66;
-        tireAngle=metres/.43f;
+        // A short distance ahead on the ground, not above his head. The wheel
+        // is naturally partly occluded by his body from the rear camera.
+        tireX=-15-TIRE_GROUND_Y*FORWARD_VIEW_SKEW+sway;
+        tireY=TIRE_GROUND_Y-46*TIRE_SCALE;
+        // Canvas has a downward Y axis: a negative angle spins anticlockwise.
+        tireAngle=-metres/.43f;
         leg(left,phase,-29+sway,-58+bob,-29,hop,-1);
         leg(right,cycle(phase+.5f),-4+sway,-58+bob,-3,hop,1);
-        // Both palms use exact points on the tire's outer ellipse throughout the gait.
-        float dx=27*(float)Math.sqrt(.5),dy=-46*(float)Math.sqrt(.5);
-        arm(leftArm,-35+sway,-132+bob,tireX-dx,tireY+dy,1);
-        arm(rightArm,5+sway,-132+bob,tireX+dx,tireY+dy,-1);
+        // Small coordinated palm strokes and elbow flexion make the forward
+        // push visible while the rubber continues rotating under the hands.
+        float contact=.95f+.018f*(float)Math.sin(a*2);
+        float dx=27*TIRE_SCALE*contact;
+        float dy=-46*TIRE_SCALE*(float)Math.sqrt(1-contact*contact);
+        float push=(float)Math.cos(a*2)*2;
+        pushingArm(leftArm,-35+sway,-132+bob,-32+sway,-106+bob+push,tireX-dx,tireY+dy);
+        pushingArm(rightArm,5+sway,-132+bob,25+sway,-106+bob+push,tireX+dx,tireY+dy);
     }
     private static float pose(float[] frames,float phase) {
         float at=cycle(phase)*frames.length;int i=(int)at;float t=at-i;
@@ -39,12 +52,10 @@ public final class RunCycle {
         out.kneeY=pose(KNEE,t)+(hy+58)*.45f-hop*3;
         out.lift=Math.max(0,-out.footY);
     }
-    private static void arm(Arm out,float sx,float sy,float hx,float hy,int bend) {
-        out.shoulderX=sx;out.shoulderY=sy;out.handX=hx;out.handY=hy;
-        float dx=hx-sx,dy=hy-sy,d=(float)Math.hypot(dx,dy);
-        float a=(34*34-35*35+d*d)/(2*d);
-        float h=(float)Math.sqrt(Math.max(0,34*34-a*a));
-        out.elbowX=sx+a*dx/d-bend*h*dy/d;
-        out.elbowY=sy+a*dy/d+bend*h*dx/d;
+    private static void pushingArm(Arm out,float sx,float sy,float ex,float ey,float hx,float hy) {
+        // Forearms point away from the camera and are foreshortened. Keeping
+        // elbows below the shoulders avoids the previous overhead lifting pose.
+        out.shoulderX=sx;out.shoulderY=sy;out.elbowX=ex;out.elbowY=ey;
+        out.handX=hx;out.handY=hy;
     }
 }
