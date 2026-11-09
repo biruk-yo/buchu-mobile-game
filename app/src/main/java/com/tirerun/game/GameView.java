@@ -3,8 +3,6 @@ package com.tirerun.game;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.*;
-import android.media.AudioManager;
-import android.media.ToneGenerator;
 import android.view.*;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -23,13 +21,13 @@ public final class GameView extends View implements GameEngine.Events {
     private final Typeface regular=Typeface.create("sans-serif",Typeface.NORMAL);
     private final SharedPreferences prefs;
     final GameEngine game;
-    private ToneGenerator tone;
+    private final GameAudio audio;
     private boolean sound, active=true, saved=false;
     private float W=432,H=960,scale=1, animation=0, downX,downY;
     private long lastFrame=0;
-    private int best,bank;
-    private String toast="";
-    private float toastTime=0;
+    private int best,bank,bestScore,missionsCompleted;
+    private String skillToast="";
+    private float toastTime=0,skillToastTime=0;
     private LinearGradient sky, forestFloor;
     private final DayNightCycle daylight=new DayNightCycle();
     private float runPhase,dogPhase;
@@ -45,8 +43,9 @@ public final class GameView extends View implements GameEngine.Events {
     private final LinearGradient tireSide=new LinearGradient(8,0,72,0,
         new int[]{0xff111613,0xff41473f,0xff121713},null,Shader.TileMode.CLAMP);
     private final LinearGradient dogCoat=new LinearGradient(-22,0,23,0,
-        new int[]{0xff734b2d,0xffc58d53,0xffaa713f,0xff744a2c},null,Shader.TileMode.CLAMP);
+        new int[]{0xff202b38,0xff657685,0xff394957,0xff172330},null,Shader.TileMode.CLAMP);
     private final TrailCamera camera=new TrailCamera();
+    private static final float[] TERRAIN_EDGES={-48,-24,-14,-7,0,7,14,24,48};
     private final VillageArt villageArt=new VillageArt();
     private boolean resetCamera=true;
     private boolean wasMenu;
@@ -65,7 +64,8 @@ public final class GameView extends View implements GameEngine.Events {
         setFocusableInTouchMode(true); requestFocus();
         prefs=context.getSharedPreferences("tire_run",Context.MODE_PRIVATE);
         best=prefs.getInt("best",0); bank=prefs.getInt("bank",0); sound=prefs.getBoolean("sound",true);
-        try { tone=new ToneGenerator(AudioManager.STREAM_MUSIC,32); } catch(RuntimeException ignored) {}
+        bestScore=prefs.getInt("bestScore",best);missionsCompleted=prefs.getInt("missionsCompleted",0);
+        audio=new GameAudio(context);
         game=new GameEngine(System.nanoTime(),this);
         try(java.io.InputStream stream=context.getAssets().open("mud-puddle.png")) {
             BitmapFactory.Options options=new BitmapFactory.Options();options.inSampleSize=2;
@@ -81,6 +81,7 @@ public final class GameView extends View implements GameEngine.Events {
         forestFloor=new LinearGradient(0,H*.43f,0,H,new int[]{0xff70836a,0xff4e6445,0xff2d4938},null,Shader.TileMode.CLAMP);
     }
     @Override protected void onDraw(Canvas canvas) {
+        audio.update(sound,active,game.state);
         long now=System.nanoTime();
         float dt=lastFrame==0?0:Math.min(GameEngine.MAX_FRAME_SECONDS,(now-lastFrame)/1e9f); lastFrame=now;
         if(active) {
@@ -93,7 +94,9 @@ public final class GameView extends View implements GameEngine.Events {
             }
         }
         daylight.sample(animation);
-        toastTime=Math.max(0,toastTime-dt);
+        if(active && game.state==GameEngine.State.RUNNING) {
+            toastTime=Math.max(0,toastTime-dt);skillToastTime=Math.max(0,skillToastTime-dt);
+        }
         if(active)mudImpact=Math.max(0,mudImpact-dt);
         canvas.save(); canvas.scale(scale,scale);
         boolean menu=game.state==GameEngine.State.MENU;
@@ -120,7 +123,7 @@ public final class GameView extends View implements GameEngine.Events {
             if(game.state==GameEngine.State.OVER && mudImpact<=0) drawGameOver(canvas);
         }
         canvas.restore();
-        if(active && (game.state==GameEngine.State.RUNNING || game.state==GameEngine.State.MENU || toastTime>0 || mudImpact>0)) postInvalidateOnAnimation();
+        if(active && (game.state==GameEngine.State.RUNNING || game.state==GameEngine.State.MENU || mudImpact>0)) postInvalidateOnAnimation();
     }
     private void drawSky(Canvas c,float skyline) {
         if(sky==null || lastSkyTop!=daylight.skyTop || lastSkyBottom!=daylight.skyBottom || skyHeight!=skyline) {
@@ -158,7 +161,7 @@ public final class GameView extends View implements GameEngine.Events {
     private void drawChaseWorld(Canvas c) {
         boolean menu=game.state==GameEngine.State.MENU;
         float travelled=(menu?villageDistance:game.distance)*TrailCamera.WORLD_SCALE;
-        float h=camera.horizon;
+        float h=camera.skyline();
         drawSky(c,h);
         poly(c,0xffaab89b,0,h+5,0,h-53,58,h-84,119,h-43,172,h-101,220,h-76,285,h-99,346,h-49,432,h-74,432,h+20);
         poly(c,0xff7f9677,0,h+12,0,h-19,74,h-46,147,h-24,210,h-53,284,h-22,355,h-44,432,h-15,432,h+30);
@@ -168,40 +171,13 @@ public final class GameView extends View implements GameEngine.Events {
             float tx=i*22-25-(float)Math.sin(camera.yaw)*30;
             oval(c,tx-16,h-53-(i%4)*10,tx+18,h+10, i%2==0?0xff64836a:0xff729074);
         }
-        // Shared perspective geometry curves the path, verges, ruts and ground shadows.
-        float far=camera.position+52;
-        for(float b=far;b>camera.position-1.6f;b-=.75f) {
-            float a=b-.75f;
-            if(camera.depth(a,0)<.65f)continue;
-            // Small yards and worn footpaths join the compounds to the trail.
-            for(int side=-1;side<=1;side+=2) {
-                int yard=Math.floorMod((int)Math.floor((a+side*2)/6.4f),4);
-                if(yard<2)roadStrip(c,a,b,side*2.55f,side*(yard==0?6.8f:5.2f),yard==0?0xff8c8960:0xff788455);
-            }
-            roadStrip(c,a,b,-2.7f,2.7f,0xff73805a);
-            roadStrip(c,a,b,-2.48f,-2.22f,0xff9d9566);
-            roadStrip(c,a,b,2.22f,2.48f,0xff9d9566);
-            roadStrip(c,a,b,-2.16f,2.16f,0xffb49c65);
-            int tile=(int)Math.floor(a*1.34f);
-            roadStrip(c,a,b,-1.98f,1.98f,0xffb98a58);
-            roadStrip(c,a,b,-1.67f,-1.38f,0xffbf905c);
-            roadStrip(c,a,b,1.38f,1.67f,0xffbf905c);
-            if(Math.floorMod(tile,11)<2) roadStrip(c,a,b,-1.96f,.7f,0x0c405536);
-        }
-        // Ground detail is tied to route distance, so it flows correctly around each bend.
-        int first=(int)Math.floor(camera.position/1.7f);
-        for(int i=first+29;i>=first;i--) {
-            float s=i*1.7f,side=(float)Math.sin(i*38.7)*1.8f;
-            float q=camera.scale(s,side)/100,x=camera.screenX(s,side),y=camera.screenY(s,side,0);
-            oval(c,x-3*q,y-q,x+3*q,y+q,0xff9e794e);
-        }
         scene.clear();
         // Reserve gameplay entries before adding decorative scenery.
         if(!menu)for(GameEngine.Item item:game.items) {
             // Resolving a collision does not remove the physical obstacle. Keep it
             // in the depth-sorted world until it passes out of the camera view.
             if(item.collected)continue;
-            addScene(camera.position+item.z*TrailCamera.WORLD_SCALE,item.lane*TrailCamera.LANE_WIDTH,4,0,item);
+            addScene(camera.position+item.z*TrailCamera.WORLD_SCALE,item.lateral()*TrailCamera.LANE_WIDTH,4,0,item);
         }
         if(menu) {
             int firstCoin=(int)Math.floor(camera.position/4)+1;
@@ -226,6 +202,7 @@ public final class GameView extends View implements GameEngine.Events {
                     addScene(s+1.4f,side*4.8f,1,id,null);
                     addScene(s-.4f,side*3.0f,2,id,null);
                     addScene(s+.2f,side*3.65f,VillageArt.HOUSEHOLD,id,null);
+                    addScene(s-.1f,side*3.15f,VillageArt.CHICKENS,id,null);
                     if(plot==2)addScene(s+2.5f,side*4.5f,VillageArt.LAUNDRY,id,null);
                 } else if(plot==1) {
                     addScene(s+1.1f,side*3.8f,VillageArt.STALL,id,null);
@@ -243,51 +220,91 @@ public final class GameView extends View implements GameEngine.Events {
         // Compound entrances span the route. Their opening always clears all three lanes.
         int gate=(int)Math.floor(camera.position/24);
         for(int i=gate;i<=gate+2;i++)addScene(i*24+12,0,7,i,null);
-        scene.sort(Comparator.comparingDouble(node -> -node.depth));
-        // Mud is a ground decal: draw it beneath feet and scenery even when
-        // its centre has passed the runner and its far edge is still visible.
-        for(SceneNode node:scene)
-            if(node.type==4 && node.item.kind==GameEngine.Kind.MUD)mudOnTrail(c,node);
-        for(SceneNode node:scene) {
-            float x=camera.screenX(node.s,node.lateral),y=camera.screenY(node.s,node.lateral,0);
-            float q=camera.scale(node.s,node.lateral)/90;
-            // Ground decals can still cross the bottom edge after their centre
-            // leaves the screen; let Canvas clip items to their full visible bounds.
-            if(x < -220*q || x>W+220*q || (node.type!=4 && y>H+270))continue;
-            switch(node.type) {
-                case 0: forestTree(c,x,y,q,node.index);break;
-                case 1:
-                    hut(c,x,y,q*1.7f,node.index);
-                    // Woven cloth and a clay water pot outside the compound.
-                    round(c,x-38*q,y-39*q,x-24*q,y-10*q,2*q,0xffe4d6ad);
-                    line(c,x-37*q,y-28*q,x-25*q,y-28*q,RUST,3*q);
-                    oval(c,x+35*q,y-22*q,x+51*q,y+1*q,0xffa65f3e);
-                    break;
-                case 2: compoundFence(c,node.s,node.lateral);break;
-                case 3: fern(c,x,y,q*.75f);break;
-                case 7: compoundGate(c,node.s);break;
-                case 8: banana(c,x,y,q);break;
-                case 4:
-                    switch(node.item.kind) {
-                        case COIN:drawCoin(c,x,y-23*q,q,animation*3+node.item.z);break;
-                        case MUD:break; // Already painted onto the ground.
-                        case ROCK:rock(c,x,y,q);break;
-                        case LOG:log(c,x,y,q);break;
-                    }
-                    break;
-                case 5:
-                    oval(c,x-29*q,y-5*q,x+39*q,y+8*q,0x40302d20);
-                    c.save();c.translate(x,y-(menu?0:game.jumpHeight()*50*q)+(mudImpact>0 && !menu?(1-mudImpact/.75f)*8*q:0));c.scale(q,q);
-                    if(!menu && game.flash>0 && ((int)(game.flash*18))%2==0)c.saveLayerAlpha(-70,-205,90,30,155);
-                    else c.save();
-                    chaseBoy(c,travelled);
-                    if(!menu && mudImpact>0)mudSplash(c,runner.tireX,runner.tireY+46*RunCycle.TIRE_SCALE,1-mudImpact/.75f);
-                    c.restore();c.restore();break;
-                case 6:dog(c,x,y,q*.78f,travelled);break;
-                default:villageArt.draw(c,node.type,x,y,q,node.index,animation);break;
+        // Paint terrain and objects together from far to near: a hill crest
+        // naturally hides the lower part of scenery on the far side.
+        scene.sort(Comparator.comparingDouble(node -> -node.s));
+        int nextNode=0;
+        float far=camera.position+96;
+        for(float b=far;b>camera.position-3;b-=b-camera.position>24?1.25f:.5f) {
+            float a=b-(b-camera.position>24?1.25f:.5f);
+            if(camera.depth(a,0)<.65f)continue;
+            drawTerrain(c,a,b);
+            // Clip each part of a puddle to its own terrain slice so nearer
+            // slices do not erase the front half of this ground-level decal.
+            for(SceneNode node:scene) {
+                if(node.type!=4 || node.item.kind!=GameEngine.Kind.MUD || node.s+.98f<a || node.s-.98f>b)continue;
+                c.save();trailQuad(a,b,-2.16f,2.16f);c.clipPath(path);
+                mudOnTrail(c,node);c.restore();
+            }
+            // The illustrations include feet and shadows in front of their
+            // anchor. Paint after that footprint, not through their ankles.
+            while(nextNode<scene.size() && scene.get(nextNode).s>=a+1.2f) {
+                drawSceneNode(c,scene.get(nextNode++),menu,travelled);
             }
         }
+        while(nextNode<scene.size())drawSceneNode(c,scene.get(nextNode++),menu,travelled);
+        if(!menu && game.state==GameEngine.State.RUNNING)drawBoostWind(c);
         if(!menu && game.flash>0)box(c,0,0,W,H,((int)(game.flash*100)<<24)|0xCA472A);
+    }
+    private void drawSceneNode(Canvas c,SceneNode node,boolean menu,float travelled) {
+        float x=camera.screenX(node.s,node.lateral),y=camera.screenY(node.s,node.lateral,0);
+        float q=camera.scale(node.s,node.lateral)/90;
+        // Ground decals can still cross the bottom edge after their centre
+        // leaves the screen; let Canvas clip items to their full visible bounds.
+        if(x < -220*q || x>W+220*q || (node.type!=4 && y>H+270))return;
+        switch(node.type) {
+            case 0: forestTree(c,x,y,q,node.index);break;
+            case 1:
+                hut(c,x,y,q*1.7f,node.index);
+                // Woven cloth and a clay water pot outside the compound.
+                round(c,x-38*q,y-39*q,x-24*q,y-10*q,2*q,0xffe4d6ad);
+                line(c,x-37*q,y-28*q,x-25*q,y-28*q,RUST,3*q);
+                oval(c,x+35*q,y-22*q,x+51*q,y+1*q,0xffa65f3e);
+                break;
+            case 2: compoundFence(c,node.s,node.lateral);break;
+            case 3: fern(c,x,y,q*.75f);break;
+            case 7: compoundGate(c,node.s);break;
+            case 8: banana(c,x,y,q);break;
+            case 4:
+                switch(node.item.kind) {
+                    case COIN:drawCoin(c,x,y-23*q,q,animation*3+node.item.z);break;
+                    case MUD:break; // Already painted onto the ground.
+                    case ROCK:rock(c,x,y,q);break;
+                    case LOG:log(c,x,y,q);break;
+                    case CHICKEN:case BASKET:case CART:
+                        villageArt.surprise(c,node.item.kind,x,y,q,animation,105-node.item.z,node.item.lane==1?-1:1);break;
+                }
+                break;
+            case 5:
+                if(!menu && game.downhillBoost()>.05f) {
+                    float boost=game.downhillBoost();
+                    for(int i=0;i<6;i++) {
+                        float phase=RunCycle.cycle(animation*1.7f+i/6f);
+                        float dx=(i%2==0?-1:1)*(20+phase*37)*q;
+                        circle(c,x+dx,y+(8+phase*17)*q,(2+phase*6)*q,
+                            ((int)((1-phase)*65*boost)<<24)|0xe7ce9b);
+                    }
+                }
+                oval(c,x-29*q,y-5*q,x+39*q,y+8*q,0x40302d20);
+                c.save();c.translate(x,y-(menu?0:game.jumpHeight()*50*q)+(mudImpact>0 && !menu?(1-mudImpact/.75f)*8*q:0));c.scale(q,q);
+                if(!menu && game.flash>0 && ((int)(game.flash*18))%2==0)c.saveLayerAlpha(-70,-205,90,30,155);
+                else c.save();
+                chaseBoy(c,travelled);
+                if(!menu && mudImpact>0)mudSplash(c,runner.tireX,runner.tireY+46*RunCycle.TIRE_SCALE,1-mudImpact/.75f);
+                c.restore();c.restore();break;
+            case 6:dog(c,x,y,q*.78f,travelled);break;
+            default:villageArt.draw(c,node.type,x,y,q,node.index,animation);break;
+        }
+    }
+    private void drawBoostWind(Canvas c) {
+        float boost=game.downhillBoost();if(boost<.05f)return;
+        for(int i=0;i<12;i++) {
+            float phase=RunCycle.cycle(animation*(1.1f+boost)+i/12f);
+            float x=i%2==0?8+(i%3)*9:W-8-(i%3)*9;
+            float y=H*(.32f+phase*.58f);
+            int alpha=(int)(boost*95*(float)Math.sin(phase*Math.PI));
+            line(c,x,y,x+(i%2==0?-5:5),y+18+boost*24,(alpha<<24)|0xffefd0,1.2f);
+        }
     }
     private void addScene(float s,float lateral,int type,int index,GameEngine.Item item) {
         float depth=camera.depth(s,lateral);
@@ -295,10 +312,52 @@ public final class GameView extends View implements GameEngine.Events {
         SceneNode node=scenePool[scene.size()];node.s=s;node.lateral=lateral;
         node.type=type;node.index=index;node.depth=depth;node.item=item;scene.add(node);
     }
+    private void drawTerrain(Canvas c,float a,float b) {
+        float light=Math.max(0,Math.min(1,.5f+TrailCamera.slope((a+b)*.5f)*1.3f));
+        // Broad strips give the road a continuous hillside instead of a flat backdrop.
+        for(int i=0;i<TERRAIN_EDGES.length-1;i++) {
+            int grass=DayNightCycle.mix(i<4?0xff536f44:0xff617c49,
+                i<4?0xff819657:0xff91a263,light);
+            roadStrip(c,a,b,TERRAIN_EDGES[i],TERRAIN_EDGES[i+1],grass);
+        }
+        for(int side=-1;side<=1;side+=2) {
+            int yard=Math.floorMod((int)Math.floor((a+side*2)/6.4f),4);
+            if(yard<2)roadStrip(c,a,b,side*2.55f,side*(yard==0?6.8f:5.2f),yard==0?0xff8c8960:0xff788455);
+        }
+        roadStrip(c,a,b,-2.7f,2.7f,0xff73805a);
+        roadStrip(c,a,b,-2.48f,-2.22f,0xff9d9566);
+        roadStrip(c,a,b,2.22f,2.48f,0xff9d9566);
+        roadStrip(c,a,b,-2.16f,2.16f,0xffb49c65);
+        roadStrip(c,a,b,-1.98f,1.98f,DayNightCycle.mix(0xffa97d50,0xffc49a65,light));
+        roadStrip(c,a,b,-1.67f,-1.38f,DayNightCycle.mix(0xffb18554,0xffcda16c,light));
+        roadStrip(c,a,b,1.38f,1.67f,DayNightCycle.mix(0xffb18554,0xffcda16c,light));
+        GameEngine.Item warning=game.state==GameEngine.State.RUNNING?game.approachingSurprise():null;
+        if(warning!=null && a>camera.position+1 && b<camera.position+Math.min(12,warning.z*TrailCamera.WORLD_SCALE)) {
+            float l=warning.lane*TrailCamera.LANE_WIDTH;
+            roadStrip(c,a,b,l-.52f,l+.52f,0x45ffcf4f);
+            if(Math.floorMod((int)(a*2),4)==0)roadStrip(c,a,b,l-.52f,l+.52f,0x60fff0b2);
+        }
+        int tile=(int)Math.floor(a*1.34f);
+        if(Math.floorMod(tile,11)<2)roadStrip(c,a,b,-1.96f,.7f,0x0c405536);
+        int pebble=(int)Math.floor(b/1.7f);
+        float s=pebble*1.7f;
+        if(s>=a && s<b) {
+            float side=(float)Math.sin(pebble*38.7)*1.8f;
+            float q=camera.scale(s,side)/100,x=camera.screenX(s,side),y=camera.screenY(s,side,0);
+            oval(c,x-3*q,y-q,x+3*q,y+q,0xff9e794e);
+        }
+    }
+    private void trailQuad(float a,float b,float l,float r) {
+        path.reset();path.moveTo(camera.screenX(a,l),camera.screenY(a,l,0));
+        path.lineTo(camera.screenX(b,l),camera.screenY(b,l,0));
+        path.lineTo(camera.screenX(b,r),camera.screenY(b,r,0));
+        path.lineTo(camera.screenX(a,r),camera.screenY(a,r,0));path.close();
+    }
     private void roadStrip(Canvas c,float a,float b,float l,float r,int color) {
-        poly(c,color,camera.screenX(a,l),camera.screenY(a,l,0),
-            camera.screenX(b,l),camera.screenY(b,l,0),camera.screenX(b,r),camera.screenY(b,r,0),
-            camera.screenX(a,r),camera.screenY(a,r,0));
+        trailQuad(a,b,l,r);p.setColor(color);
+        // Adjacent filled mesh faces share exact edges; antialiasing each face
+        // separately leaves translucent seams across the grassy slopes.
+        p.setAntiAlias(false);c.drawPath(path,p);p.setAntiAlias(true);
     }
     private void compoundFence(Canvas c,float s,float lateral) {
         for(int i=0;i<7;i++) {
@@ -481,37 +540,7 @@ public final class GameView extends View implements GameEngine.Events {
     }
 
     private void hut(Canvas c,float x,float y,float s,int variation) {
-        c.save(); c.translate(x,y); c.scale(s,s);
-        float light=daylight.night;
-        oval(c,-62,-9,65,12,0x253b482f);
-        // Warm interior light spills through the open doorway onto the courtyard.
-        if(light>.01f) {
-            poly(c,((int)(light*42)<<24)|0xffbc50,8,-3,27,-3,53,28,-17,28);
-            poly(c,((int)(light*63)<<24)|0xffd77d,9,-2,26,-2,39,17,-3,17);
-            oval(c,-48,-9,49,14,((int)(light*35)<<24)|0xffcd6a);
-        }
-        box(c,-44,-76,44,0,0xffba8050);
-        oval(c,-44,-89,44,-61,0xffba8050);
-        oval(c,-44,-15,44,7,0xffba8050);
-        if(light>.01f) {
-            oval(c,-40,-63,1,-19,((int)(light*48)<<24)|0xffc76b);
-            oval(c,0,-58,37,8,((int)(light*45)<<24)|0xffbe5c);
-        }
-        box(c,6,-53,29,2,0xff745035);
-        box(c,8,-51,27,1,DayNightCycle.mix(0xff503c2e,0xffffc561,light));
-        box(c,12,-47,25,-3,DayNightCycle.mix(0xff59412e,0xffffe6a2,light));
-        // A recessed door edge keeps the opening readable as a lit interior.
-        poly(c,0xff705036,8,-51,13,-47,13,-3,8,1);
-        box(c,-31,-55,-8,-29,0xff835c37);
-        box(c,-29,-53,-10,-31,DayNightCycle.mix(0xff705238,0xffffe6a3,light));
-        box(c,-26,-50,-13,-34,DayNightCycle.mix(0xff705238,0xfffff4d0,light));
-        line(c,-19,-53,-19,-31,0xff986d3d,2);
-        line(c,-29,-42,-10,-42,0xff986d3d,2);
-        poly(c,0xff745e3b,-59,-67,0,-125,59,-67,35,-59,-31,-59);
-        for(int i=-5;i<=5;i++) line(c,0,-122,i*10,-65,0xffa48a53,2);
-        line(c,-57,-66,57,-66,0xffc1a261,5);
-        line(c,-44,-20,8,-20,0xffd6ab6d,3);
-        c.restore();
+        villageArt.house(c,x,y,s,variation,animation,daylight.night);
     }
     private void drawCoin(Canvas c,float x,float y,float s,float t) {
         float width=(.75f+.25f*Math.abs((float)Math.cos(t)))*12*s;
@@ -587,27 +616,28 @@ public final class GameView extends View implements GameEngine.Events {
         p.setColor(Color.WHITE);p.setShader(dogCoat);c.drawPath(path,p);p.setShader(null);
         path.reset();path.moveTo(-9,-47);path.cubicTo(-2,-53,8,-53,10,-44);
         path.cubicTo(5,-33,12,-26,7,-16);path.cubicTo(-2,-12,-10,-24,-7,-32);
-        path.close();p.setColor(0xff82552f);c.drawPath(path,p);
-        oval(c,-21,-28,-7,-10,0xffb7834d);oval(c,7,-28,22,-10,0xff986035);
-        line(c,-12,-44,-16,-34,0xffd1a16b,1.5f);line(c,13,-44,16,-34,0xffd1a16b,1.5f);
+        path.close();p.setColor(0xffeef1eb);c.drawPath(path,p);
+        oval(c,-21,-28,-7,-10,0xffdce4e7);oval(c,7,-28,22,-10,0xff425260);
+        line(c,-12,-44,-16,-34,0xffb8c8d2,1.5f);line(c,13,-44,16,-34,0xffb8c8d2,1.5f);
         // Only the nape, ears and a small side profile are visible from the chase camera.
-        oval(c,-13,-62,13,-43,0xffab7946);
-        line(c,-12,-47,12,-47,0xff9c3f2b,3.5f);
+        oval(c,-13,-62,13,-43,0xffe7ece6);
+        line(c,-12,-47,12,-47,0xff28b8ed,3.5f);
         circle(c,9,-47,1.7f,0xffd0ac64);
         c.save();c.translate(-2,-63);c.rotate((float)Math.sin(a)*1.3f);
-        oval(c,-14,-12,14,12,0xffb78550);
-        poly(c,0xff916238,-12,-2,-19,-21-(float)Math.sin(a)*1.5f,-4,-11);
-        poly(c,0xffab7645,12,-2,19,-20+(float)Math.sin(a)*1.5f,4,-11);
-        poly(c,0xff5f4430,-11,-6,-15,-16,-5,-10);
-        poly(c,0xff765237,11,-6,15,-15,6,-10);
-        poly(c,0xffb88d5c,-12,-10,-20,-6,-20,0,-10,4);
+        oval(c,-14,-12,14,12,0xff344452);
+        poly(c,0xfff4f4ec,-4,-11,2,-12,5,5,-2,11,-6,3);
+        poly(c,0xff1c2937,-12,-2,-19,-21-(float)Math.sin(a)*1.5f,-4,-11);
+        poly(c,0xff263744,12,-2,19,-20+(float)Math.sin(a)*1.5f,4,-11);
+        poly(c,0xff101b27,-11,-6,-15,-16,-5,-10);
+        poly(c,0xff162635,11,-6,15,-15,6,-10);
+        poly(c,0xfff1f2e9,-12,-10,-20,-6,-20,0,-10,4);
         oval(c,-22,-7,-17,-2,0xff343b2b);
         line(c,-15,-5,-14,-6,0xff403b2c,1);
-        oval(c,-9,0,10,12,0xffa36b3e);c.restore();
+        oval(c,-9,0,10,12,0xffdce4e7);c.restore();
         path.reset();path.moveTo(2,-16);path.cubicTo(9,-7,24+(float)Math.sin(a-.4f)*2,-6,
             27+(float)Math.sin(a-.4f)*3,-25);
-        p.setColor(0xffa7703f);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(5);p.setStrokeCap(Paint.Cap.ROUND);
-        c.drawPath(path,p);p.setStrokeWidth(1.4f);p.setColor(0xffd0a471);c.drawPath(path,p);p.setStyle(Paint.Style.FILL);
+        p.setColor(0xff243542);p.setStyle(Paint.Style.STROKE);p.setStrokeWidth(5);p.setStrokeCap(Paint.Cap.ROUND);
+        c.drawPath(path,p);p.setStrokeWidth(1.4f);p.setColor(0xffe3eceb);c.drawPath(path,p);p.setStyle(Paint.Style.FILL);
         c.restore();
         for(int i=0;i<2;i++) {
             float dust=RunCycle.cycle(phase+i*.5f);int alpha=(int)((1-dust)*35);
@@ -622,20 +652,28 @@ public final class GameView extends View implements GameEngine.Events {
         float px=baseX+reach*.12f,py=floor-lift;
         float kneeX=hx+(hx<0?-1:1)*(front?2:3),kneeY=hy+(front?12:8)+reach*.3f;
         float hockX=(kneeX+px)*.5f,hockY=(kneeY+py)*.5f-3;
-        int color=front?0xff845632:0xffaa7543;
+        int color=front?0xff2b3c4a:0xff566875;
         line(c,hx,hy,kneeX,kneeY,color,front?6:9);
         line(c,kneeX,kneeY,hockX,hockY,color,front?5:6);
-        line(c,hockX,hockY,px,py,front?0xff9c6f46:0xffc3945f,4);
-        oval(c,px-4.5f,py-2,px+4.5f,py+3.5f,0xffbf935e);
-        for(int i=-1;i<=1;i++)line(c,px+i*2,py+1,px+i*2,py+3,0xff6c4e32,.7f);
+        line(c,hockX,hockY,px,py,front?0xffcdd9de:0xffe1e9e8,4);
+        oval(c,px-4.5f,py-2,px+4.5f,py+3.5f,0xfff1f3ec);
+        for(int i=-1;i<=1;i++)line(c,px+i*2,py+1,px+i*2,py+3,0xff475966,.7f);
     }
 
     private void drawMenu(Canvas c) {
+        // A descending valley can move the skyline behind the title on short
+        // screens. Fade the moving scenery beneath the lettering.
+        float titleScale=Math.min(1,Math.max(.78f,(H-520)/360));
+        float veilBottom=90+206*titleScale+62;
+        int veil=daylight.skyTop & 0x00ffffff;
+        p.setColor(Color.WHITE);
+        p.setShader(new LinearGradient(0,0,0,veilBottom,
+            new int[]{0xff000000|veil,0xf0000000|veil,veil},new float[]{0,.72f,1},Shader.TileMode.CLAMP));
+        c.drawRect(0,0,W,veilBottom,p);p.setShader(null);
         brandIcon.setBounds(26,34,78,86);brandIcon.draw(c);
         text(c,"MADE TO ROLL",91,56,11,outsideText(),bold,Paint.Align.LEFT);
         text(c,"An Ethiopian village adventure",91,75,10,outsideText(),regular,Paint.Align.LEFT);
         soundButton(c,386,58);
-        float titleScale=Math.min(1,Math.max(.78f,(H-520)/360));
         c.save();c.scale(titleScale,titleScale,216,90);
         text(c,"ቡቹ",216,194,108,0x25a66a30,bold,Paint.Align.CENTER);
         text(c,"ቡቹ",216,190,108,outsideText(),bold,Paint.Align.CENTER);
@@ -651,14 +689,15 @@ public final class GameView extends View implements GameEngine.Events {
         float top=H-226;
         round(c,18,top+5,414,H-21,28,0x3031261c);
         round(c,18,top,414,H-26,28,0xfffff6e1);
-        text(c,"COLLECT COINS. OUTRUN THE DOG.",216,top+28,11,GREEN,bold,Paint.Align.CENTER);
-        round(c,34,top+43,210,top+82,13,0xffeee5cb);
-        round(c,222,top+43,398,top+82,13,0xffeee5cb);
-        text(c,"BEST",50,top+67,10,GREEN,bold,Paint.Align.LEFT);
-        text(c,best+" m",195,top+68,16,INK,bold,Paint.Align.RIGHT);
-        drawCoin(c,241,top+63,.52f,0);
-        text(c,"COINS",258,top+67,10,GREEN,bold,Paint.Align.LEFT);
-        text(c,""+bank,383,top+68,16,INK,bold,Paint.Align.RIGHT);
+        text(c,"NEXT MISSION  ·  +25 COINS",216,top+22,10,GREEN,bold,Paint.Align.CENTER);
+        text(c,GameEngine.missionLabel(missionsCompleted),216,top+40,12,INK,bold,Paint.Align.CENTER);
+        round(c,34,top+51,210,top+88,13,0xffeee5cb);
+        round(c,222,top+51,398,top+88,13,0xffeee5cb);
+        text(c,"BEST SCORE",46,top+75,9,GREEN,bold,Paint.Align.LEFT);
+        text(c,""+bestScore,198,top+76,15,INK,bold,Paint.Align.RIGHT);
+        drawCoin(c,241,top+71,.52f,0);
+        text(c,"COINS",258,top+75,10,GREEN,bold,Paint.Align.LEFT);
+        text(c,""+bank,383,top+76,16,INK,bold,Paint.Align.RIGHT);
         button(c,34,top+100,398,top+158,"LET’S ROLL",GOLD,INK);
         poly(c,INK,105,top+118,105,top+139,120,top+128.5f);
         text(c,"SWIPE TO STEER  ·  SWIPE UP TO JUMP",216,top+184,10,GREEN,medium,Paint.Align.CENTER);
@@ -674,17 +713,38 @@ public final class GameView extends View implements GameEngine.Events {
         text(c,String.format(java.util.Locale.US,"%03d",game.coins),229,91,29,INK,bold,Paint.Align.LEFT);
         round(c,353,43,414,112,19,INK);
         line(c,377,68,377,87,CREAM,4);line(c,390,68,390,87,CREAM,4);
-        if(game.strikes>0) {
-            round(c,66,127,366,179,17,0xf2fff6e1);
-            text(c,"THE DOG IS GETTING CLOSER!",216,149,11,RUST,bold,Paint.Align.CENTER);
-            text(c,"Stay clear for "+(int)Math.ceil(game.recovery)+"s to recover",216,168,11,INK,regular,Paint.Align.CENTER);
-        } else {
-            text(c,district(),216,139,10,outsideText(),bold,Paint.Align.CENTER);
+        round(c,18,124,414,186,15,game.missionComplete?0xf2f5e4a7:0xf2fff6e1);
+        text(c,game.missionComplete?"MISSION COMPLETE  ·  +25 COINS":"RUN MISSION  ·  +25 COINS",32,142,9,GREEN,bold,Paint.Align.LEFT);
+        text(c,game.missionProgress()+" / "+game.missionTarget(),400,142,10,INK,bold,Paint.Align.RIGHT);
+        text(c,game.missionLabel(),32,161,12,INK,bold,Paint.Align.LEFT);
+        round(c,32,171,400,176,2,0xffded6ba);
+        float progress=game.missionProgress()/(float)game.missionTarget();
+        if(progress>0)round(c,32,171,32+368*progress,176,2,GREEN);
+        GameEngine.Item surprise=game.approachingSurprise();
+        if(surprise!=null) {
+            round(c,34,194,398,239,12,0xfff8ce65);
+            text(c,GameEngine.warningTitle(surprise.kind),216,212,12,INK,bold,Paint.Align.CENTER);
+            text(c,GameEngine.warningHint(surprise),216,230,10,INK,bold,Paint.Align.CENTER);
+        } else if(game.strikes>0) {
+            round(c,45,194,387,236,12,0xf2fff6e1);
+            text(c,"THE DOG IS GETTING CLOSER!",216,211,11,RUST,bold,Paint.Align.CENTER);
+            text(c,"Stay clear for "+(int)Math.ceil(game.recovery)+"s to recover",216,227,10,INK,regular,Paint.Align.CENTER);
+        } else if(game.downhillBoost()>.08f) {
+            round(c,110,194,322,225,12,0xf2f5c149);
+            int percent=Math.round((game.speed()/game.baseSpeed()-1)*100);
+            text(c,"DOWNHILL BOOST  +"+percent+"%",216,214,11,INK,bold,Paint.Align.CENTER);
+        } else text(c,district(),216,211,10,outsideText(),bold,Paint.Align.CENTER);
+        if(skillToastTime>0) {
+            round(c,74,246,358,280,12,0xf2244538);
+            text(c,skillToast,216,268,13,CREAM,bold,Paint.Align.CENTER);
         }
+        round(c,18,H-48,414,H-18,12,0xe6fff6e1);
+        text(c,"SCORE  "+game.score(),32,H-28,11,INK,bold,Paint.Align.LEFT);
+        text(c,"BEST  "+Math.max(bestScore,game.score()),400,H-28,10,GREEN,bold,Paint.Align.RIGHT);
         if(game.elapsed<6 && game.strikes==0) {
-            round(c,34,157,398,216,17,0xf2fff6e1);
-            text(c,"SWIPE LEFT / RIGHT TO STEER",216,180,13,INK,bold,Paint.Align.CENTER);
-            text(c,"Swipe up to hop rocks & logs. Steer around mud.",216,201,11,INK,regular,Paint.Align.CENTER);
+            round(c,34,H-105,398,H-57,14,0xf2fff6e1);
+            text(c,"SWIPE TO STEER  ·  SWIPE UP TO HOP",216,H-85,11,INK,bold,Paint.Align.CENTER);
+            text(c,"Dodge late or time a perfect hop for bonus points.",216,H-68,10,INK,regular,Paint.Align.CENTER);
         }
     }
     private String district() { return TrailCamera.district(game.distance); }
@@ -699,23 +759,27 @@ public final class GameView extends View implements GameEngine.Events {
         text(c,"Two hits within 8 seconds end the run.",216,y+164,13,INK,regular,Paint.Align.CENTER);
         button(c,45,y+190,387,y+245,"KEEP ROLLING",RUST,CREAM);
         button(c,45,y+257,387,y+307,"BACK TO VILLAGE",0xffe7ddc6,INK);
-        text(c,"SOUND "+(sound?"ON":"OFF")+"  ·  TAP TO CHANGE",216,y+341,11,INK,bold,Paint.Align.CENTER);
+        text(c,"MUSIC & SOUND "+(sound?"ON":"OFF")+"  ·  TAP TO CHANGE",216,y+341,11,INK,bold,Paint.Align.CENTER);
     }
     private void drawGameOver(Canvas c) {
         box(c,0,0,W,H,0x9c20372e);
-        float y=H*.5f-203;
-        round(c,25,y,407,y+406,27,CREAM);
-        text(c,game.endReason.contains("mud")?"STUCK IN THE MUD!":"CAUGHT UP!",216,y+48,26,INK,bold,Paint.Align.CENTER);
-        text(c,game.endReason,216,y+77,12,INK,regular,Paint.Align.CENTER);
-        text(c,"Every great run starts with another roll.",216,y+100,12,0xff77806d,regular,Paint.Align.CENTER);
-        text(c,""+(int)game.distance,123,y+165,45,INK,bold,Paint.Align.CENTER);
-        text(c,"METRES",123,y+186,10,INK,bold,Paint.Align.CENTER);
-        text(c,"+"+game.coins,305,y+165,45,RUST,bold,Paint.Align.CENTER);
-        text(c,"COINS COLLECTED",305,y+186,10,INK,bold,Paint.Align.CENTER);
-        line(c,216,y+127,216,y+188,0xffd9cdb4,1);
-        text(c,"PERSONAL BEST  "+best+" m",216,y+224,12,GREEN,bold,Paint.Align.CENTER);
-        button(c,45,y+247,387,y+303,"ONE MORE RUN",RUST,CREAM);
-        button(c,45,y+315,387,y+365,"BACK TO VILLAGE",0xffe7ddc6,INK);
+        float y=H*.5f-240;
+        round(c,25,y,407,y+480,27,CREAM);
+        text(c,game.endReason.contains("mud")?"STUCK IN THE MUD!":"CAUGHT UP!",216,y+43,26,INK,bold,Paint.Align.CENTER);
+        text(c,game.endReason,216,y+68,12,INK,regular,Paint.Align.CENTER);
+        text(c,""+game.score(),216,y+125,45,INK,bold,Paint.Align.CENTER);
+        text(c,"RUN SCORE  ·  "+game.bonusPoints+" SKILL POINTS",216,y+145,10,GREEN,bold,Paint.Align.CENTER);
+        text(c,""+(int)game.distance,123,y+188,30,INK,bold,Paint.Align.CENTER);
+        text(c,"METRES",123,y+207,10,INK,bold,Paint.Align.CENTER);
+        text(c,"+"+game.earnedCoins(),305,y+188,30,RUST,bold,Paint.Align.CENTER);
+        text(c,"COINS EARNED",305,y+207,10,INK,bold,Paint.Align.CENTER);
+        line(c,216,y+163,216,y+209,0xffd9cdb4,1);
+        text(c,game.nearMisses+" CLOSE CALL"+(game.nearMisses==1?"":"S")+"  ·  "+game.perfectHops+" PERFECT HOP"+(game.perfectHops==1?"":"S"),216,y+236,11,INK,bold,Paint.Align.CENTER);
+        text(c,game.missionComplete?"MISSION COMPLETE  ·  +25 COINS BANKED":"MISSION  "+game.missionProgress()+" / "+game.missionTarget()+"  ·  TRY AGAIN",216,y+264,11,GREEN,bold,Paint.Align.CENTER);
+        text(c,"BEST SCORE  "+bestScore+"  ·  LONGEST  "+best+" m",216,y+292,10,GREEN,bold,Paint.Align.CENTER);
+        button(c,45,y+317,387,y+371,"ONE MORE RUN",RUST,CREAM);
+        button(c,45,y+384,387,y+432,"BACK TO VILLAGE",0xffe7ddc6,INK);
+        text(c,game.missionComplete?"Your next mission is ready.":"A fresh run. Another chance.",216,y+458,11,INK,regular,Paint.Align.CENTER);
     }
     private void soundButton(Canvas c,float x,float y) { round(c,x-24,y-18,x+24,y+18,12,0xffe9ddbf);text(c,sound?"♪":"×",x,y+8,23,INK,bold,Paint.Align.CENTER); }
     private void button(Canvas c,float l,float t,float r,float b,String label,int bg,int fg) { round(c,l,t+4,r,b+4,16,0x20332920);round(c,l,t,r,b,16,bg);text(c,label,(l+r)/2,(t+b)/2+6,15,fg,bold,Paint.Align.CENTER); }
@@ -733,7 +797,7 @@ public final class GameView extends View implements GameEngine.Events {
         if(event.getAction()==MotionEvent.ACTION_UP) {
             float dx=x-downX,dy=y-downY;
             if(game.state==GameEngine.State.RUNNING && Math.max(Math.abs(dx),Math.abs(dy))>25) {
-                if(Math.abs(dx)>Math.abs(dy))game.move(dx>0?1:-1);else if(dy<0)game.jump();
+                if(Math.abs(dx)>Math.abs(dy))game.move(dx>0?1:-1);else if(dy<0)jump();
             } else if(Math.max(Math.abs(dx),Math.abs(dy))<25) tap(x,y);
             performClick();invalidate();return true;
         }
@@ -759,33 +823,50 @@ public final class GameView extends View implements GameEngine.Events {
                 break;
             case OVER:
                 if(mudImpact>0)break;
-                float oY=H*.5f-203;
+                float oY=H*.5f-240;
                 if(x>45 && x<387) {
-                    if(y>oY+247 && y<oY+303)start();
-                    else if(y>oY+315 && y<oY+365)game.state=GameEngine.State.MENU;
+                    if(y>oY+317 && y<oY+371)start();
+                    else if(y>oY+384 && y<oY+432)game.state=GameEngine.State.MENU;
                 }
                 break;
         }
     }
-    private void start() { runPhase=0;dogPhase=0;mudImpact=0;resetCamera=true;saved=false;toastTime=0;game.start();lastFrame=0;invalidate(); }
+    private void start() { runPhase=0;dogPhase=0;mudImpact=0;resetCamera=true;saved=false;toastTime=skillToastTime=0;game.start(missionsCompleted);lastFrame=0;invalidate(); }
     private void resume() { game.resume();lastFrame=0;invalidate(); }
-    private void toggleSound() { sound=!sound;prefs.edit().putBoolean("sound",sound).apply(); }
+    private void jump() {
+        if(game.state==GameEngine.State.RUNNING && game.jumpTime<=0) { game.jump();audio.play(GameAudio.JUMP); }
+    }
+    private void toggleSound() { sound=!sound;prefs.edit().putBoolean("sound",sound).apply();audio.update(sound,active,game.state); }
     @Override public boolean onKeyDown(int key,android.view.KeyEvent event) {
         if(event.getRepeatCount()>0)return true;
         if(key==KeyEvent.KEYCODE_DPAD_LEFT || key==KeyEvent.KEYCODE_A)game.move(-1);
         else if(key==KeyEvent.KEYCODE_DPAD_RIGHT || key==KeyEvent.KEYCODE_D)game.move(1);
-        else if(key==KeyEvent.KEYCODE_DPAD_UP || key==KeyEvent.KEYCODE_W || key==KeyEvent.KEYCODE_SPACE) { if(game.state==GameEngine.State.MENU || game.state==GameEngine.State.OVER)start();else game.jump(); }
+        else if(key==KeyEvent.KEYCODE_DPAD_UP || key==KeyEvent.KEYCODE_W || key==KeyEvent.KEYCODE_SPACE) { if(game.state==GameEngine.State.MENU || game.state==GameEngine.State.OVER)start();else jump(); }
         else if(key==KeyEvent.KEYCODE_P || key==KeyEvent.KEYCODE_ESCAPE)back();
         else if(key==KeyEvent.KEYCODE_ENTER) { if(game.state==GameEngine.State.PAUSED)resume();else if(game.state!=GameEngine.State.RUNNING)start(); }
         else return super.onKeyDown(key,event);
         invalidate();return true;
     }
     public void back() { if(game.state==GameEngine.State.RUNNING)game.pause();else if(game.state==GameEngine.State.PAUSED)resume();else game.state=GameEngine.State.MENU;invalidate(); }
-    public void background() { game.pause();active=false;lastFrame=0; }
-    public void foreground() { active=true;lastFrame=0;invalidate(); }
-    public void release() { if(tone!=null)tone.release(); }
-    @Override public void coin() { if(sound && tone!=null)tone.startTone(ToneGenerator.TONE_PROP_BEEP,45);toast="+1 COIN";toastTime=.6f; }
-    @Override public void stumble() { performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);if(sound && tone!=null)tone.startTone(ToneGenerator.TONE_PROP_NACK,120); }
-    @Override public void end(String reason) { mudImpact=reason.contains("mud")?.75f:0;saveProgress();performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);if(sound && tone!=null)tone.startTone(ToneGenerator.TONE_CDMA_ABBR_ALERT,200); }
-    private void saveProgress() { if(saved)return;saved=true;best=Math.max(best,(int)game.distance);bank+=game.coins;prefs.edit().putInt("best",best).putInt("bank",bank).apply(); }
+    public void background() { game.pause();active=false;lastFrame=0;audio.update(sound,false,game.state); }
+    public void foreground() { active=true;lastFrame=0;audio.update(sound,true,game.state);invalidate(); }
+    public void release() { audio.release(); }
+    @Override public void warning(GameEngine.Kind kind) { audio.play(GameAudio.WARNING); }
+    @Override public void coin() { audio.play(GameAudio.COIN);toastTime=.6f; }
+    @Override public void skill(String label,int points) {
+        skillToast=label+"  +"+points;skillToastTime=1.6f;
+        audio.play(GameAudio.SKILL);
+    }
+    @Override public void missionComplete() {
+        // Bank mission rewards immediately; ordinary run coins are saved at
+        // game over / return to the village and must not include this bonus twice.
+        missionsCompleted++;bank+=GameEngine.MISSION_REWARD;
+        prefs.edit().putInt("missionsCompleted",missionsCompleted).putInt("bank",bank).apply();
+        skillToast="MISSION COMPLETE!  +25 COINS";skillToastTime=2.8f;
+        performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);
+        audio.play(GameAudio.MISSION);
+    }
+    @Override public void stumble() { performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);audio.play(GameAudio.STUMBLE); }
+    @Override public void end(String reason) { mudImpact=reason.contains("mud")?.75f:0;saveProgress();performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);audio.play(GameAudio.END); }
+    private void saveProgress() { if(saved)return;saved=true;best=Math.max(best,(int)game.distance);bestScore=Math.max(bestScore,game.score());bank+=game.coins;prefs.edit().putInt("best",best).putInt("bestScore",bestScore).putInt("bank",bank).apply(); }
 }

@@ -4,24 +4,34 @@ import android.graphics.*;
 
 /** Small roadside scenes in the same local metre/pixel scale as the village renderer. */
 public final class VillageArt {
-    public static final int STALL=9,GARDEN=10,HEDGE=11,HOUSEHOLD=12,LAUNDRY=13,NEIGHBOR=14,STONES=15;
+    public static final int STALL=9,GARDEN=10,HEDGE=11,HOUSEHOLD=12,LAUNDRY=13,NEIGHBOR=14,STONES=15,CHICKENS=16;
+    private final VillageHomes homes=new VillageHomes();
     private final Paint p=new Paint(3);
     private final Path path=new Path();
     private final RectF bounds=new RectF();
     public void draw(Canvas c,int kind,float x,float y,float scale,int seed,float time) {
         c.save();c.translate(x,y);c.scale(scale,scale);
         switch(kind) {
-            case STALL:stall(c,seed);break;
+            case STALL:stall(c,seed,time);break;
             case GARDEN:garden(c,seed);break;
             case HEDGE:hedge(c,seed);break;
             case HOUSEHOLD:household(c,seed);break;
             case LAUNDRY:laundry(c,seed,time);break;
             case NEIGHBOR:neighbor(c,seed,time);break;
             case STONES:stones(c,seed);break;
+            case CHICKENS:
+                for(int i=0;i<3;i++) {
+                    c.save();c.translate((i-1)*22+(float)Math.sin(time*.7f+seed+i)*6,-i*5);
+                    c.scale(.45f,.45f);chicken(c,time+i,seed%2==0?1:-1,true);c.restore();
+                }
+                break;
         }
         c.restore();
     }
-    private void stall(Canvas c,int seed) {
+    public void house(Canvas c,float x,float y,float scale,int seed,float time,float night) {
+        homes.draw(c,x,y,scale,seed,time,night);
+    }
+    private void stall(Canvas c,int seed,float time) {
         ellipse(c,-77,-8,80,14,0x303e422b);
         line(c,-58,0,-58,-115,0xff755234,5);line(c,58,0,58,-115,0xff755234,5);
         poly(c,0xff59422d,-62,-45,62,-45,56,-5,-55,-5);
@@ -34,6 +44,11 @@ public final class VillageArt {
         }
         for(int i=0;i<8;i++)ellipse(c,-72+i*18,-104,-54+i*18,-91,i%2==0?0xffe1c78e:cloth);
         line(c,-72,-98,72,-98,0xff765b38,2);
+        // A vendor sorts produce behind the counter.
+        rect(c,-8,-73,12,-51,0xffe6d8b8);ellipse(c,-6,-91,10,-72,0xff925d3c);
+        ellipse(c,-7,-94,11,-85,0xff29382d);
+        float reach=(float)Math.sin(time*1.3f+seed)*8;
+        line(c,10,-68,24+reach,-55,0xff925d3c,5);
         for(int b=0;b<3;b++) {
             float x=-40+b*40;
             ellipse(c,x-17,-61,x+17,-39,0xffb48243);
@@ -121,7 +136,7 @@ public final class VillageArt {
         }
     }
     private void neighbor(Canvas c,int seed,float time) {
-        float wave=(float)Math.sin(time*1.7f+seed)*3;
+        float wave=(float)Math.sin(time*1.7f+seed)*7;
         ellipse(c,-17,-3,18,4,0x353e432b);
         int skin=seed%2==0?0xff815035:0xff9b6745;
         line(c,-7,-42,-8,-5,skin,7);line(c,8,-42,9,-5,skin,7);
@@ -137,6 +152,65 @@ public final class VillageArt {
         ellipse(c,-14,-136,14,-117,0xff30342a);
         if(seed%2==1) {poly(c,0xffe5dcc0,-15,-128,0,-142,16,-128,14,-112,0,-124,-14,-112);}
         ellipse(c,-6,-120,-3,-117,0xff292f24);ellipse(c,4,-120,7,-117,0xff292f24);
+        if(seed%3==1)basket(c,-25,-51,.7f);
+    }
+    public void surprise(Canvas c,GameEngine.Kind kind,float x,float y,float scale,float time,float travel,int direction) {
+        c.save();c.translate(x,y);c.scale(scale,scale);
+        if(kind==GameEngine.Kind.CHICKEN) {
+            chicken(c,time,direction,false);
+            c.save();c.translate(-direction*22,4);c.scale(.48f,.48f);chicken(c,time+.3f,direction,false);c.restore();
+        } else if(kind==GameEngine.Kind.BASKET) {
+            ellipse(c,-27,-3,29,9,0x403a392a);
+            c.save();c.translate(0,-22-(float)Math.abs(Math.sin(travel*.7f))*3);c.rotate(travel*23*direction);
+            ellipse(c,-24,-24,24,24,0xffb87938);ellipse(c,-20,-20,20,20,0xffd7af6a);
+            ellipse(c,-15,-15,15,15,0xff6e4b2d);
+            for(int i=0;i<12;i++) {
+                float a=i*(float)Math.PI/6;
+                line(c,16*(float)Math.cos(a),16*(float)Math.sin(a),22*(float)Math.cos(a),22*(float)Math.sin(a),0xfff1d39a,2);
+            }
+            line(c,-21,-8,21,-8,0xff9c713e,1.5f);line(c,-21,8,21,8,0xff9c713e,1.5f);
+            c.restore();
+        } else cart(c,travel,direction);
+        c.restore();
+    }
+    private void chicken(Canvas c,float time,int direction,boolean peck) {
+        c.save();c.scale(direction,1);
+        ellipse(c,-22,-2,23,5,0x30344129);
+        float step=(float)Math.sin(time*12)*7;
+        line(c,-6,-13,-9+step,0,0xffd58e32,2.5f);line(c,6,-13,10-step,0,0xffd58e32,2.5f);
+        line(c,-9+step,0,-4+step,1,0xffe7b047,2);line(c,10-step,0,15-step,1,0xffe7b047,2);
+        poly(c,0xfff2eee0,-13,-15,-28,-32,-21,-34,-9,-25);
+        ellipse(c,-21,-32,15,-8,0xfff5f0df);ellipse(c,-14,-28,8,-13,0xffd7d2c0);
+        float bob=peck?Math.max(0,(float)Math.sin(time*2))*13:(float)Math.sin(time*12)*1.5f;
+        ellipse(c,5,-43+bob,20,-24+bob,0xfffff6e1);
+        ellipse(c,7,-48+bob,13,-39+bob,0xffc34f37);ellipse(c,12,-47+bob,18,-40+bob,0xffc34f37);
+        poly(c,0xffe6ab3d,19,-36+bob,28,-32+bob,19,-30+bob);
+        ellipse(c,13,-38+bob,16,-35+bob,0xff27352c);
+        ellipse(c,16,-29+bob,21,-23+bob,0xffc34f37);
+        if(!peck)line(c,-10,-23,2,-17+(float)Math.sin(time*12)*4,0xffaaa88e,2);
+        c.restore();
+    }
+    private void cart(Canvas c,float travel,int direction) {
+        ellipse(c,-43,-3,45,11,0x4538412c);
+        // A tall, solid cart is visibly different from the low, hop-able basket.
+        for(int side=-1;side<=1;side+=2) {
+            c.save();c.translate(side*31,-12);c.rotate(travel*19*direction);
+            ellipse(c,-12,-16,12,16,0xff293c40);ellipse(c,-8,-12,8,12,0xffa9b4aa);
+            for(int i=0;i<4;i++) { c.rotate(45);line(c,0,-11,0,11,0xff4d625c,1.5f); }
+            ellipse(c,-3,-3,3,3,0xffe3d5b3);c.restore();
+        }
+        poly(c,0xff496c71,-39,-50,32,-50,38,-19,-33,-19);
+        poly(c,0xff315156,32,-50,45,-61,47,-31,38,-19);
+        poly(c,0xffbfa573,-39,-50,-26,-63,45,-61,32,-50);
+        for(int i=0;i<4;i++)line(c,-34,-44+i*7,33,-44+i*7,0xff9ba994,2);
+        line(c,-39,-50,32,-50,0xffe2c88d,4);
+        for(int i=0;i<6;i++) {
+            float xx=-23+(i%3)*20,yy=-60-(i/3)*15;
+            ellipse(c,xx-11,yy-13,xx+12,yy+3,i%2==0?0xffd4b56c:0xffa8b075);
+            line(c,xx-8,yy-5,xx+8,yy-5,0xff81764e,1);
+        }
+        line(c,34,-32,61,-13,0xff786344,4);line(c,31,-25,55,-7,0xffab8e5d,3);
+        poly(c,0xffdfb852,-22,-41,-14,-46,-6,-41,-14,-35);
     }
     private void stones(Canvas c,int seed) {
         for(int i=0;i<3;i++) {
