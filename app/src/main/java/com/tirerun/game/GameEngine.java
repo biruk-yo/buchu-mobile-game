@@ -5,6 +5,8 @@ import java.util.Random;
 
 /** Platform-independent rules, measured in world metres and seconds. */
 public final class GameEngine {
+    // Catch up after slow frames in small steps, but bound work after a long stall.
+    public static final float MAX_FRAME_SECONDS=.25f;
     public enum State { MENU, RUNNING, PAUSED, OVER }
     public enum Kind { COIN, ROCK, LOG, MUD }
     public static final class Item {
@@ -34,15 +36,23 @@ public final class GameEngine {
         items.add(new Item(Kind.MUD,-1,70));
         items.add(new Item(Kind.COIN,1,70));
     }
-    public float speed() { return Math.min(23f, 10f+distance/180f); }
+    // A brisk arcade start, building to full pace in roughly a minute of running.
+    public float speed() { return Math.min(32f, 18f+distance/100f); }
     public float jumpHeight() { return jumpTime<=0?0:(float)Math.sin(Math.PI*(1-jumpTime/0.85f)); }
     public void move(int direction) { if(state==State.RUNNING) lane=Math.max(-1,Math.min(1,lane+direction)); }
     public void jump() { if(state==State.RUNNING && jumpTime<=0) jumpTime=0.85f; }
     public void pause() { if(state==State.RUNNING) state=State.PAUSED; }
     public void resume() { if(state==State.PAUSED) state=State.RUNNING; }
     public void update(float dt) {
-        if(state!=State.RUNNING || dt<=0) return;
-        dt=Math.min(dt,0.05f);
+        if(state!=State.RUNNING || !Float.isFinite(dt) || dt<=0) return;
+        float remaining=Math.min(dt,MAX_FRAME_SECONDS);
+        while(remaining>0 && state==State.RUNNING) {
+            float step=Math.min(remaining,.05f);
+            updateStep(step);
+            remaining-=step;
+        }
+    }
+    private void updateStep(float dt) {
         elapsed+=dt;
         visualLane+=(lane-visualLane)*Math.min(1,dt*14);
         jumpTime=Math.max(0,jumpTime-dt); flash=Math.max(0,flash-dt);

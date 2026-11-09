@@ -21,7 +21,15 @@ public final class GameEngineTest {
         g=fresh();g.jump();for(int i=0;i<6;i++)g.update(.05f);hit(g,GameEngine.Kind.ROCK);check(g.strikes==0,"Hop clears rock");hit(g,GameEngine.Kind.LOG);check(g.strikes==0,"Hop clears log");hit(g,GameEngine.Kind.MUD);check(g.state==GameEngine.State.OVER,"Mud traps tire even during hop");
         g=fresh();g.move(-1);for(int i=0;i<15;i++)g.update(.02f);g.items.add(new GameEngine.Item(GameEngine.Kind.MUD,0,.01f));g.update(.01f);check(g.state==GameEngine.State.RUNNING,"Changing lane avoids mud");g.move(-1);check(g.lane==-1,"Cannot leave left lane");g.move(1);g.move(1);g.move(1);check(g.lane==1,"Cannot leave right lane");
         g=fresh();g.pause();float distance=g.distance;g.update(.05f);g.move(1);g.jump();check(g.distance==distance && g.lane==0 && g.jumpTime==0,"Pause freezes gameplay and input");g.resume();g.update(.05f);check(g.distance>distance,"Resume advances gameplay");
-        g=fresh();g.distance=100000;check(g.speed()==23,"Speed has a playable upper bound");g.start();check(g.distance==0 && g.coins==0 && g.strikes==0 && g.lane==0,"Restart resets run");
+        g=fresh();g.distance=100000;check(g.speed()==32,"Speed has a playable upper bound");g.start();check(g.distance==0 && g.coins==0 && g.strikes==0 && g.lane==0,"Restart resets run");
+        GameEngine smooth=fresh(),slow=fresh();
+        for(int i=0;i<20;i++)smooth.update(.05f);
+        for(int i=0;i<10;i++)slow.update(.1f);
+        check(Math.abs(smooth.distance-slow.distance)<.001f && Math.abs(slow.elapsed-1)<.001f,"Slow frames preserve real-time pace");
+        g=fresh();g.update(10);check(Math.abs(g.elapsed-.25f)<.001f,"Long stalls have bounded catch-up");
+        g=fresh();g.items.add(new GameEngine.Item(GameEngine.Kind.MUD,0,.6f));
+        g.items.add(new GameEngine.Item(GameEngine.Kind.COIN,0,2));g.update(.25f);
+        check(g.state==GameEngine.State.OVER && g.coins==0 && g.elapsed<.25f,"Catch-up detects hazards and stops immediately on game over");
         for(GameEngine.Kind kind:new GameEngine.Kind[]{GameEngine.Kind.ROCK,GameEngine.Kind.LOG,GameEngine.Kind.MUD}) {
             g=fresh();GameEngine.Item obstacle=new GameEngine.Item(kind,1,.01f);g.items.add(obstacle);
             g.update(.05f);

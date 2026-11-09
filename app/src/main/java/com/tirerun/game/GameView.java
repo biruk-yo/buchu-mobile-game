@@ -82,7 +82,7 @@ public final class GameView extends View implements GameEngine.Events {
     }
     @Override protected void onDraw(Canvas canvas) {
         long now=System.nanoTime();
-        float dt=lastFrame==0?0:Math.min(.05f,(now-lastFrame)/1e9f); lastFrame=now;
+        float dt=lastFrame==0?0:Math.min(GameEngine.MAX_FRAME_SECONDS,(now-lastFrame)/1e9f); lastFrame=now;
         if(active) {
             game.update(dt);
             if(game.state==GameEngine.State.RUNNING || game.state==GameEngine.State.MENU) {
@@ -752,7 +752,7 @@ public final class GameView extends View implements GameEngine.Events {
             case PAUSED:
                 float pY=H*.5f-185;
                 if(x>45 && x<387) {
-                    if(y>pY+190 && y<pY+245)game.resume();
+                    if(y>pY+190 && y<pY+245)resume();
                     else if(y>pY+257 && y<pY+307) { saveProgress();game.state=GameEngine.State.MENU; }
                     else if(y>pY+317 && y<pY+362)toggleSound();
                 }
@@ -768,6 +768,7 @@ public final class GameView extends View implements GameEngine.Events {
         }
     }
     private void start() { runPhase=0;dogPhase=0;mudImpact=0;resetCamera=true;saved=false;toastTime=0;game.start();lastFrame=0;invalidate(); }
+    private void resume() { game.resume();lastFrame=0;invalidate(); }
     private void toggleSound() { sound=!sound;prefs.edit().putBoolean("sound",sound).apply(); }
     @Override public boolean onKeyDown(int key,android.view.KeyEvent event) {
         if(event.getRepeatCount()>0)return true;
@@ -775,11 +776,11 @@ public final class GameView extends View implements GameEngine.Events {
         else if(key==KeyEvent.KEYCODE_DPAD_RIGHT || key==KeyEvent.KEYCODE_D)game.move(1);
         else if(key==KeyEvent.KEYCODE_DPAD_UP || key==KeyEvent.KEYCODE_W || key==KeyEvent.KEYCODE_SPACE) { if(game.state==GameEngine.State.MENU || game.state==GameEngine.State.OVER)start();else game.jump(); }
         else if(key==KeyEvent.KEYCODE_P || key==KeyEvent.KEYCODE_ESCAPE)back();
-        else if(key==KeyEvent.KEYCODE_ENTER) { if(game.state==GameEngine.State.PAUSED)game.resume();else if(game.state!=GameEngine.State.RUNNING)start(); }
+        else if(key==KeyEvent.KEYCODE_ENTER) { if(game.state==GameEngine.State.PAUSED)resume();else if(game.state!=GameEngine.State.RUNNING)start(); }
         else return super.onKeyDown(key,event);
         invalidate();return true;
     }
-    public void back() { if(game.state==GameEngine.State.RUNNING)game.pause();else if(game.state==GameEngine.State.PAUSED)game.resume();else game.state=GameEngine.State.MENU;invalidate(); }
+    public void back() { if(game.state==GameEngine.State.RUNNING)game.pause();else if(game.state==GameEngine.State.PAUSED)resume();else game.state=GameEngine.State.MENU;invalidate(); }
     public void background() { game.pause();active=false;lastFrame=0; }
     public void foreground() { active=true;lastFrame=0;invalidate(); }
     public void release() { if(tone!=null)tone.release(); }

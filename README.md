@@ -10,6 +10,7 @@ A playable Android endless-runner prototype: an Ethiopian boy rolls an upright t
 - The camera follows the trail’s left and right bends automatically. Steering changes lanes relative to the path; coins and hazards follow the same route geometry.
 - Roadside courtyards include striped produce stalls, neighbors, laundry lines, clay pots, woven baskets, woodpiles and wells. Garden beds, hedges, stone verges and woven fences fill the spaces between compounds, with all scenery placed outside the running lanes.
 - Swipe up to jump over rocks and logs.
+- Runs start at a brisk 18 metres/second and build to 32 metres/second over roughly the first minute. Slow frames catch up in small simulation steps (up to 250 ms per frame) to keep phone gameplay at its intended pace.
 - Rocks, logs and mud remain visible after passing the boy and leave through the screen edge; collision checks still happen only once as they reach him.
 - Mud traps the tire and ends the run, including during a hop. Steer around it.
 - Mud uses a bundled wet-soil texture, ground-perspective mapping, subtle ripples and an impact splash before the result screen.
